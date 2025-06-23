@@ -1,0 +1,23 @@
+/target
+
+# ビルド成果物
+*.efi
+*.pdb
+*.bin
+*.hex
+/mnt/
+/third_party/ovmf/
+
+# 一時ファイル
+*.tmp
+*.log
+
+# エディタ/IDE関連
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
