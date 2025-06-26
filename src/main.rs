@@ -2,20 +2,19 @@
 #![no_main]
 #![feature(offset_of)]
 
+use core::arch::asm;
 use core::mem::offset_of;
 use core::mem::size_of;
 use core::panic::PanicInfo;
-use core::slice;
 use core::ptr::null_mut;
+use core::slice;
 
 type EfiVoid = u8;
 type EfiHandle = u64;
 type Result<T> = core::result::Result<T, &'static str>;
 
-
 #[no_mangle]
 fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
-
     let efi_graphics_output_protocol = locate_graphic_protolocol(efi_system_table).unwrap();
     let vram_address = efi_graphics_output_protocol.mode.frame_buffer_base;
     let vram_byte_size = efi_graphics_output_protocol.mode.frame_buffer_size;
@@ -30,7 +29,10 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
         *e = 0xFFFFFF;
     }
 
-    loop{};
+    loop {
+        // 待機
+        hlt();
+    }
 }
 
 // #[repr(C)]はC言語のメモリレイアウトに合わせるためにつける
@@ -38,7 +40,6 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
 #[repr(C)]
 struct EfiBootServiceTable {
     // Define the structure of the EFI Boot Services Table
-    
     reserved0: [u64; 40],
     locate_protocol: extern "win64" fn(
         protocol: *const EfiGuid,
@@ -50,7 +51,7 @@ struct EfiBootServiceTable {
 // 構造体のフィールドのオフセットを確認
 // こうすることで、コンパイル時にチェックできる
 // 例えば、新しいフィールドを前に追加したときにオフセットが意図してズレたときに気づける
-const _:() = assert!(offset_of!(EfiBootServiceTable, locate_protocol) == 320);
+const _: () = assert!(offset_of!(EfiBootServiceTable, locate_protocol) == 320);
 
 #[repr(C)]
 struct EfiSystemTable {
@@ -59,7 +60,7 @@ struct EfiSystemTable {
     pub boot_services: &'static EfiBootServiceTable,
 }
 
-const _:() = assert!(offset_of!(EfiSystemTable, boot_services) == 96);
+const _: () = assert!(offset_of!(EfiSystemTable, boot_services) == 96);
 
 const EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID: EfiGuid = EfiGuid {
     data0: 0x9042a9de,
@@ -67,7 +68,6 @@ const EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID: EfiGuid = EfiGuid {
     data2: 0x4a38,
     data3: [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a],
 };
-
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -106,7 +106,7 @@ struct EfiGraphicsOutputProtocolPixelInfo {
     pub pixels_per_scan_line: u32, // 水平方向に含まれる画素数
 }
 
-const _:() = assert!(size_of::<EfiGraphicsOutputProtocolPixelInfo>() == 36);
+const _: () = assert!(size_of::<EfiGraphicsOutputProtocolPixelInfo>() == 36);
 
 fn locate_graphic_protolocol<'a>(
     efi_system_table: &EfiSystemTable,
@@ -132,10 +132,20 @@ enum EfiStatus {
     // Define other EFI status codes as needed
 }
 
+pub fn hlt() {
+    unsafe {
+        // CPUに停止させる命令
+        asm!("hlt");
+    }
+}
+
 // use core::{panic::PanicInfo, slice};
 
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop {}
+    loop {
+        // 待機
+        hlt();
+    }
 }
