@@ -115,6 +115,8 @@ const _: () = assert!(size_of::<EfiGraphicsOutputProtocolPixelInfo>() == 36);
 fn locate_graphic_protolocol<'a>(
     efi_system_table: &EfiSystemTable,
 ) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
+
+    // EfiGraphicsOutputProtocolへのポインタを格納するための変数
     let mut graphic_output_protocol = null_mut::<EfiGraphicsOutputProtocol>();
 
     // EFI_GRAPHICS_OUTPUT_PROTOCOL_GUIDはグラフィックス機能のためのプロトコルを示すGUID
@@ -127,6 +129,8 @@ fn locate_graphic_protolocol<'a>(
     if status != EfiStatus::Success {
         return Err("Failed to locate graphics output protocol");
     }
+
+    // 生ポインタから参照に変換して返す
     Ok(unsafe { &*graphic_output_protocol })
 }
 
