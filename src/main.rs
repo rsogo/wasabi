@@ -13,6 +13,10 @@ type EfiVoid = u8;
 type EfiHandle = u64;
 type Result<T> = core::result::Result<T, &'static str>;
 
+// no_mangleを指定することで、コンパイル時の名前の変更を防ぐ。
+// UEFIのエントリポイント
+// _image_handle: UEFIのイメージハンドル
+// efi_system_table: UEFIのシステムテーブルへのポインタ
 #[no_mangle]
 fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
     let efi_graphics_output_protocol = locate_graphic_protolocol(efi_system_table).unwrap();
@@ -112,10 +116,12 @@ fn locate_graphic_protolocol<'a>(
     efi_system_table: &EfiSystemTable,
 ) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
     let mut graphic_output_protocol = null_mut::<EfiGraphicsOutputProtocol>();
+
+    // EFI_GRAPHICS_OUTPUT_PROTOCOL_GUIDはグラフィックス機能のためのプロトコルを示すGUID
     let status = (efi_system_table.boot_services.locate_protocol)(
         &EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
         null_mut::<EfiVoid>(),
-        &mut graphic_output_protocol as *mut *mut EfiGraphicsOutputProtocol as *mut *mut EfiVoid,
+        &mut graphic_output_protocol as *mut *mut EfiGraphicsOutputProtocol as *mut *mut EfiVoid,   // UEFIとのやりとりをするために生ポインタにキャストしている
     );
 
     if status != EfiStatus::Success {
