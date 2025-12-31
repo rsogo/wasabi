@@ -30,6 +30,10 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
     fill_rect(&mut vram, 64, 64, 64, 64, 0x00_ff_00).expect("fill_rect failed");
     fill_rect(&mut vram, 128, 128, 128, 128, 0xff_00_00).expect("fill_rect failed");
     
+    for i in 0..256 {
+        let _ = draw_point(&mut vram, i, i, 0x01_01_01);
+    }
+
     loop {
         // 待機
         hlt();
@@ -40,6 +44,16 @@ unsafe fn unchecked_draw_point<T: Bitmap>(buf: &mut T, x: i64, y: i64, color: u3
 
     // X, Y座標から、ピクセルのアドレスを計算して色を書き込む
     *buf.unchecked_pixel_at_mut(x, y) = color;
+}
+
+fn draw_point<T: Bitmap>(
+    buf: &mut T,
+    x: i64,
+    y: i64,
+    color: u32
+) -> Result<()> {
+    *(buf.pixel_at_mut(x, y).ok_or("Out of Range")?) = color;
+    Ok(())
 }
 
 fn fill_rect<T: Bitmap>(
