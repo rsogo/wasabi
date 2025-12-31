@@ -3,11 +3,11 @@
 #![feature(offset_of)]
 
 use core::arch::asm;
+use core::cmp::min;
 use core::mem::offset_of;
 use core::mem::size_of;
 use core::panic::PanicInfo;
 use core::ptr::null_mut;
-use core::slice;
 
 type EfiVoid = u8;
 type EfiHandle = u64;
@@ -19,24 +19,53 @@ type Result<T> = core::result::Result<T, &'static str>;
 // efi_system_table: UEFIのシステムテーブルへのポインタ
 #[no_mangle]
 fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
-    let efi_graphics_output_protocol = locate_graphic_protolocol(efi_system_table).unwrap();
-    let vram_address = efi_graphics_output_protocol.mode.frame_buffer_base;
-    let vram_byte_size = efi_graphics_output_protocol.mode.frame_buffer_size;
-    let vram = unsafe {
-        slice::from_raw_parts_mut(
-            vram_address as *mut u32,
-            vram_byte_size as usize / size_of::<u32>(),
-        )
-    };
+    
+    let mut vram: VramBufferInfo = init_vram(efi_system_table).expect("init_vram failed");
 
-    for e in vram {
-        *e = 0xFFFFFF;
-    }
+    let vw = vram.width;
+    let vh = vram.height;
 
+    fill_rect(&mut vram, 0, 0, vw, vh, 0x00_00_00).expect("fill_rect failed");
+    fill_rect(&mut vram, 32, 32, 32, 32, 0x00_00_ff).expect("fill_rect failed");
+    fill_rect(&mut vram, 64, 64, 64, 64, 0x00_ff_00).expect("fill_rect failed");
+    fill_rect(&mut vram, 128, 128, 128, 128, 0xff_00_00).expect("fill_rect failed");
+    
     loop {
         // 待機
         hlt();
     }
+}
+
+unsafe fn unchecked_draw_point<T: Bitmap>(buf: &mut T, x: i64, y: i64, color: u32) {
+
+    // X, Y座標から、ピクセルのアドレスを計算して色を書き込む
+    *buf.unchecked_pixel_at_mut(x, y) = color;
+}
+
+fn fill_rect<T: Bitmap>(
+    buf: &mut T,
+    px: i64,
+    py: i64,
+    w: i64,
+    h: i64,
+    color: u32
+) -> Result<()> {
+    if !buf.is_in_x_range(px)
+        || !buf.is_in_y_range(py)
+        || !buf.is_in_x_range(px + w - 1)
+        || !buf.is_in_y_range(py + h - 1)
+    {
+        return Err("Out of range");
+    }
+
+    for y in py..(py + h) {
+        for x in px..(px + w) {
+            unsafe {
+                unchecked_draw_point(buf, x, y, color);
+            }
+        }
+    }
+    Ok(())
 }
 
 // #[repr(C)]はC言語のメモリレイアウトに合わせるためにつける
@@ -158,4 +187,72 @@ fn panic(_info: &PanicInfo) -> ! {
         // 待機
         hlt();
     }
+}
+
+trait Bitmap {
+    fn bytes_per_pixel(&self) -> i64;
+    fn pixels_per_line(&self) -> i64;
+    fn width(&self) -> i64;
+    fn height(&self) -> i64;
+    fn bur_mut(&self) -> *mut u8;
+
+    unsafe fn unchecked_pixel_at_mut(&mut self, x: i64, y: i64) -> *mut u32 {
+        self.bur_mut().add(
+            ((y * self.pixels_per_line() + x) * self.bytes_per_pixel()) as usize,
+        ) as *mut u32
+    }
+
+    fn pixel_at_mut(&mut self, x: i64, y: i64) -> Option<&mut u32> {
+        
+        if self.is_in_x_range(x) && self.is_in_y_range(y) {
+            unsafe { Some(&mut *self.unchecked_pixel_at_mut(x, y)) }
+        } else {
+            None
+        }
+    }
+
+    fn is_in_x_range(&self, x: i64) -> bool {
+        0 <= x && x < min(self.width(), self.pixels_per_line())
+    }
+    fn is_in_y_range(&self, y: i64) -> bool {
+        0 <= y && y < self.height()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VramBufferInfo {
+    pub width: i64,
+    pub height: i64,
+    pub pixels_per_line: i64,
+    pub buffer: *mut u8,
+}
+
+// BitmapトレイトをVramBufferInfo構造体に実装。bytes_per_pixelだけ4に固定
+impl Bitmap for VramBufferInfo {
+    fn bytes_per_pixel(&self) -> i64 {
+        4
+    }
+    fn pixels_per_line(&self) -> i64 {
+        self.pixels_per_line
+    }
+    fn width(&self) -> i64 {
+        self.width
+    }
+    fn height(&self) -> i64 {
+        self.height
+    }
+    fn bur_mut(&self) -> *mut u8 {
+        self.buffer
+    }
+}
+
+fn init_vram(efi_system_table: &EfiSystemTable) -> Result<VramBufferInfo> {
+    
+    let gp = locate_graphic_protolocol(efi_system_table)?;
+    Ok(VramBufferInfo{
+        width: gp.mode.info.horizontal_resolution as i64,
+        height: gp.mode.info.vertical_resolution as i64,
+        pixels_per_line: gp.mode.info.pixels_per_scan_line as i64,
+        buffer: gp.mode.frame_buffer_base as *mut u8,
+    })
 }
