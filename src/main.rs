@@ -34,6 +34,23 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
         let _ = draw_point(&mut vram, i, i, 0x01_01_01);
     }
 
+    // Gridを描画
+    let grid_size: i64 = 32;
+    let rect_size: i64 = grid_size * 8;
+    for i in (0..=rect_size).step_by(grid_size as usize) {
+        let _ = draw_line(&mut vram, 0, i, rect_size, i, 0xff_00_00);
+        let _ = draw_line(&mut vram, i, 0, i, rect_size, 0xff_00_00);
+    }
+
+    let cx = rect_size / 2;
+    let cy = rect_size / 2;
+    for i in (0..=rect_size).step_by(grid_size as usize) {
+        let _ = draw_line(&mut vram, cx, cy, 0, i, 0xff_ff_00);
+        let _ = draw_line(&mut vram, cx, cy, i, 0, 0x00_ff_ff);
+        let _ = draw_line(&mut vram, cx, cy, rect_size, i, 0xff_00_ff);
+        let _ = draw_line(&mut vram, cx, cy, i, rect_size, 0xff_ff_ff);
+    }
+
     loop {
         // 待機
         hlt();
@@ -77,6 +94,66 @@ fn fill_rect<T: Bitmap>(
             unsafe {
                 unchecked_draw_point(buf, x, y, color);
             }
+        }
+    }
+    Ok(())
+}
+
+/**
+ * 直線の傾きを計算する関数
+ * da: 直線の長い辺の長さ
+ * db: 直線の短い辺の長さ
+ * ia: 直線の長い辺に沿った現在の位置
+ */
+fn calc_slope_point(da: i64, db: i64, ia: i64) -> Option<i64> {
+    if da < db {
+        None
+    } else if da == 0 {
+        Some(0)
+    } else if (0..=da).contains(&ia) {
+        Some((2 * db *ia + da) / da / 2 )
+    } else {
+        None
+    }
+}
+
+fn draw_line<T: Bitmap>(
+    buf: &mut T,
+    x0: i64,
+    y0: i64,
+    x1: i64,
+    y1: i64,
+    color: u32
+) -> Result<()> {
+    
+    if !buf.is_in_x_range(x0)
+        || !buf.is_in_y_range(y0)
+        || !buf.is_in_x_range(x1)
+        || !buf.is_in_y_range(y1)
+    {
+        return Err("Out of range");
+    }
+
+    let dx = (x1 - x0).abs();
+    let sx = (x1 - x0).signum();
+    let dy = (y1 - y0).abs();
+    let sy = (y1 - y0).signum();
+
+    if dx >= dy {
+        // |rx| は無名関数の引数
+        for (rx, ry) in (0..dx) // rxを0からdxまで変化させるイテレータ
+            .flat_map(|rx|  // Noneをスキップ
+                calc_slope_point(dx, dy, rx)    // rxに対応するryを計算
+                .map(
+                    |ry| (rx, ry))) // rxとryのタプルを作る
+        {
+            draw_point(buf, x0 + rx * sx, y0 + ry * sy, color)?;
+        }
+    } else {
+        for (ry, rx) in (0..dy)
+            .flat_map(|ry| calc_slope_point(dy, dx, ry).map(|rx| (ry, rx))) 
+        {
+            draw_point(buf, x0 + rx * sx, y0 + ry * sy, color)?;
         }
     }
     Ok(())
