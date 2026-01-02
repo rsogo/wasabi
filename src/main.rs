@@ -50,6 +50,33 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
         let _ = draw_line(&mut vram, cx, cy, rect_size, i, 0xff_00_ff);
         let _ = draw_line(&mut vram, cx, cy, i, rect_size, 0xff_ff_ff);
     }
+    let font_a = "
+........
+...**...
+...**...
+...**...
+...**...
+..*..*..
+..*..*..
+..*..*..
+..*..*..
+.******.
+.*....*.
+.*....*.
+.*....*.
+***..***
+........
+........
+";
+    for (y, row) in font_a.trim().split('\n').enumerate() {
+        for (x, pixel) in row.chars().enumerate() {
+            let color = match pixel {
+                '*' => 0xff_ff_ff,
+                _ => 0x00_00_00,
+            };
+            let _ = draw_point(&mut vram, x as i64, y as i64, color);
+        }
+    }
 
     loop {
         // 待機
