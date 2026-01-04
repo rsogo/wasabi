@@ -56,6 +56,8 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
     }
     draw_font_fg(&mut vram, 0, 0, 0xff_ff_ff, 'A');
 
+    draw_str_fg(&mut vram, 256, 256, 0xff_ff_ff, "Hello, world!");
+
     loop {
         // 待機
         hlt();
@@ -80,6 +82,18 @@ fn draw_font_fg<T: Bitmap>(
                 let _ = draw_point(buf, x + dx as i64, y + dy as i64, color);
             }
         }
+    }
+}
+
+fn draw_str_fg<T: Bitmap>(
+    buf: &mut T,
+    x: i64,
+    y: i64,
+    color: u32,
+    str: &str) {
+        
+    for (i, c) in str.chars().enumerate() {
+        draw_font_fg(buf, x + (i as i64) * 8, y, color, c);
     }
 }
 
