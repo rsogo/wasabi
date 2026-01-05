@@ -4,6 +4,8 @@
 
 use core::arch::asm;
 use core::cmp::min;
+use core::fmt;
+use core::fmt::Write;
 use core::mem::offset_of;
 use core::mem::size_of;
 use core::panic::PanicInfo;
@@ -57,6 +59,25 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) -> ! {
     draw_font_fg(&mut vram, 0, 0, 0xff_ff_ff, 'A');
 
     draw_str_fg(&mut vram, 256, 256, 0xff_ff_ff, "Hello, world!");
+
+    let mut w = VramTextWriter::new(&mut vram); // mutは可変
+
+    for i in 0..4 {
+        writeln!(w, "i = {}", i).unwrap();
+    }
+
+    let mut memory_map = MemoryMapHolder::new();
+    let status = efi_system_table
+        .boot_services
+        .get_memory_map(&mut memory_map);
+    writeln!(w, "{status:?}").unwrap();
+    for e in memory_map.iter() {
+        writeln!(
+            w,
+            "{e:?}"
+        ).unwrap();
+    }
+
 
     loop {
         // 待機
@@ -226,12 +247,53 @@ fn draw_line<T: Bitmap>(
     Ok(())
 }
 
+
+struct VramTextWriter<'a> {
+    vram: &'a mut VramBufferInfo,
+    cursor_x: i64,
+    cursor_y: i64,
+}
+
+impl<'a> VramTextWriter<'a> {
+    fn new(vram: &'a mut VramBufferInfo) -> Self {
+        Self {
+            vram,
+            cursor_x: 0,
+            cursor_y: 0,
+        }
+    }
+}
+
+impl fmt::Write for VramTextWriter<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+
+        for c in s.chars() {
+            if c == '\n' {      // 改行があったら、次の行にY座標を移動して、X座標を0に戻す
+                self.cursor_x = 0;
+                self.cursor_y += 16;
+                continue;
+            }
+            draw_font_fg(self.vram, self.cursor_x, self.cursor_y, 0xff_ff_ff, c);
+            self.cursor_x += 8;
+        }
+        Ok(())
+    }
+}
+
 // #[repr(C)]はC言語のメモリレイアウトに合わせるためにつける
 // 付けないとRustで最適化されて、どこにあるのか予測不可能になる
 #[repr(C)]
 struct EfiBootServiceTable {
     // Define the structure of the EFI Boot Services Table
-    reserved0: [u64; 40],
+    reserved0: [u64; 7],
+    get_memory_map: extern "win64" fn(
+        memory_map_size: *mut usize,    // *mutは生ポインタ。下位レイヤーとのやりとりのために生ポインタが必要
+        memory_map: *mut u8,
+        map_key: *mut usize,
+        descriptor_size: *mut usize,
+        descriptor_version: *mut u32,
+    ) -> EfiStatus,
+    reserved1: [u64; 32],
     locate_protocol: extern "win64" fn(
         protocol: *const EfiGuid,
         registration: *const EfiVoid,
@@ -239,9 +301,105 @@ struct EfiBootServiceTable {
     ) -> EfiStatus,
 }
 
+impl EfiBootServiceTable {
+
+    fn get_memory_map(&self, map: &mut MemoryMapHolder) -> EfiStatus {
+        (self.get_memory_map)(
+            &mut map.memory_map_size,
+            map.memory_map_buffer.as_mut_ptr(),
+            &mut map.map_key,
+            &mut map.descriptor_size,
+            &mut map.descriptor_version,
+        )
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+struct EfiMemoryDescriptor {
+    memory_type: EfiMemoryType,
+    physical_start: u64,
+    virtual_start: u64,
+    number_of_pages: u64,
+    attribute: u64,
+}
+
+const MEMORY_MAP_BUFFER_SIZE: usize = 0x8000; // 32KB;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(i64)]
+#[allow(non_camel_case_types)]
+pub enum EfiMemoryType {
+    RESERVED = 0,
+    LOADER_CODE,
+    LOADER_DATA,
+    BOOT_SERVICE_CODE,
+    BOOT_SERVICE_DATA,
+    RUNTIME_SERVICE_CODE,
+    RUNTIME_SERVICE_DATA,
+    CONVENTIONAL_MEMORY,
+    UNUSABLE_MEMORY,
+    ACPI_RECLAIM_MEMORY,
+    ACPI_MEMORY_NVS,
+    MEMORY_MAPPED_IO,
+    MEMORY_MAPPED_IO_PORT_SPACE,
+    PAL_CODE,
+    PERSISTENT_MEMORY,
+}
+
+struct MemoryMapHolder {
+    memory_map_buffer: [u8; MEMORY_MAP_BUFFER_SIZE],
+    memory_map_size: usize,
+    map_key: usize,
+    descriptor_size: usize,
+    descriptor_version: u32,
+}
+
+struct MemoryMapIterator<'a> {
+    map: &'a MemoryMapHolder,
+    ofs: usize,
+}
+
+impl<'a> Iterator for MemoryMapIterator<'a> {
+    type Item = &'a EfiMemoryDescriptor;
+
+    fn next(&mut self) -> Option<&'a EfiMemoryDescriptor> {
+        if self.ofs >= self.map.memory_map_size {
+            None
+        } else {
+            let e: &EfiMemoryDescriptor = unsafe {
+                &*(self.map.memory_map_buffer.as_ptr().add(self.ofs) as *const EfiMemoryDescriptor)
+            };
+            self.ofs += self.map.descriptor_size;
+            Some(e)
+        }
+    }
+}
+
+impl MemoryMapHolder {
+    pub const fn new() -> MemoryMapHolder{
+        MemoryMapHolder {
+            memory_map_buffer: [0; MEMORY_MAP_BUFFER_SIZE],
+            memory_map_size: MEMORY_MAP_BUFFER_SIZE,
+            map_key: 0,
+            descriptor_size: 0,
+            descriptor_version: 0,
+        }
+    }
+
+    pub fn iter(&self) -> MemoryMapIterator {
+        MemoryMapIterator {
+            map: self,
+            ofs: 0,
+        }
+    }
+}
+
+
 // 構造体のフィールドのオフセットを確認
 // こうすることで、コンパイル時にチェックできる
 // 例えば、新しいフィールドを前に追加したときにオフセットが意図してズレたときに気づける
+const _: () = assert!(offset_of!(EfiBootServiceTable, get_memory_map) == 56);
 const _: () = assert!(offset_of!(EfiBootServiceTable, locate_protocol) == 320);
 
 #[repr(C)]
